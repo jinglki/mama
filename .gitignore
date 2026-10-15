@@ -1,0 +1,9 @@
+models/*
+!models/.gitkeep
+img/enhance/
+runs/*
+!runs/.gitkeep
+results/*
+!results/.gitkeep
+__pycache__/
+*.pyc
