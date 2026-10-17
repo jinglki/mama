@@ -1,0 +1,30 @@
+model:
+  # qwen35 | llava | custom; exactly one model is loaded per run.
+  type: qwen35
+  repo_id: Qwen/Qwen3.5-9B
+  path: models/Qwen3.5-9B
+  device: cuda
+  dtype: bfloat16
+  trust_remote_code: false
+  max_new_tokens: 256
+
+preprocess:
+  width: 512
+  height: 512
+  # contain pads without cropping objects; EXIF rotation is applied automatically.
+  rotation_degrees: 0
+  sharpness: 1.0
+
+enhancement:
+  output_dir: img/enhance
+  workers: 4
+  strengths: {Low: 0.30, Med: 0.60, High: 1.0}
+  waternet_weights: enhance/waternet/waternet_exported_state_dict-daa0ee.pt
+  zero_dce_steps: 20
+
+inference:
+  include_original: true
+  output_dir: runs
+
+evaluation:
+  output_dir: results
