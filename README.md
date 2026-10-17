@@ -28,17 +28,22 @@ JSONL 样本清单
 `truth` 按输入图片顺序给出实例数量；大于零视为存在。每个条件的输出形如 `{"images":[{"image_index":0,"present":true,"count":1,"locations":["左上"]}]}`。解析器检查顺序、类型、数量与位置个数的一致性。无效回答记为 `invalid`，计入错误率和准确率分母；混淆矩阵的 `tn/fp/fn/tp` 只包含有效回答。准确率、错误率、精确率、召回率、F1、有效回答率、计数完全正确率及计数 MAE 均按条件单独统计。位置是语言描述，目前没有位置真值指标。
 
 ## 运行
-
-1. 激活环境：`source ~/miniconda3/etc/profile.d/conda.sh && conda activate mama`。
-2. 在 `config/config.yaml` 配置 `model.repo_id` 与 `model.path`，运行 `python -m mama download` 将完整模型仓库下载到 `models/`，包括权重、config、tokenizer 和 processor 文件。也可使用 Hugging Face CLI：
+1. 请在项目中完成以下指令：
+    ```bash
+    mkdir ./enhance
+    cd enhance
+    git clone https://github.com/tnwei/waternet.git --depth 1 
+    ```
+2. 激活环境：`source ~/miniconda3/etc/profile.d/conda.sh && conda activate mama`。
+3. 在 `config/config.yaml` 配置 `model.repo_id` 与 `model.path`，运行 `python -m mama download` 将完整模型仓库下载到 `models/`，包括权重、config、tokenizer 和 processor 文件。也可使用 Hugging Face CLI：
 
    ```bash
    hf download Qwen/Qwen3.5-9B --local-dir models/Qwen3.5-9B
    # 或：hf download llava-hf/llava-1.5-7b-hf --local-dir models/llava-1.5-7b-hf
    ```
 
-3. 在 `config/config.yaml` 选择 `model.type` 和对应 `model.path`。未知模型选 `custom`，它必须兼容 `AutoProcessor` 和 `AutoModelForImageTextToText` 的聊天模板与图像输入。默认使用 CUDA 和 BF16；显卡不支持 BF16 时选 `float16`。CPU 仅用于小规模调试，设 `device: cpu`、`dtype: float32`。
-4. 运行：
+4. 在 `config/config.yaml` 选择 `model.type` 和对应 `model.path`。未知模型选 `custom`，它必须兼容 `AutoProcessor` 和 `AutoModelForImageTextToText` 的聊天模板与图像输入。默认使用 CUDA 和 BF16；显卡不支持 BF16 时选 `float16`。CPU 仅用于小规模调试，设 `device: cpu`、`dtype: float32`。
+5. 运行：
 
    ```bash
    python -m mama all --manifest dataset/samples.jsonl

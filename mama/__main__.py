@@ -1,8 +1,7 @@
 import argparse
 import json
 import uuid
-from pathlib import Path
-
+from .download import download_from_modelscope
 from .config import load_config, project_path
 from .evaluation import evaluate
 from .pipeline import infer, load_jsonl, prepare, read_samples, save_jsonl
@@ -19,15 +18,7 @@ def main():
     args = parser.parse_args()
     cfg = load_config(args.config)
     if args.command == "download":
-        from huggingface_hub import snapshot_download
-
-        repo_id = cfg["model"].get("repo_id")
-        if not repo_id:
-            parser.error("model.repo_id is required for download")
-        destination = project_path(cfg["model"]["path"])
-        snapshot_download(repo_id=repo_id, local_dir=destination)
-        print(f"Model downloaded: {destination}")
-        return
+        download_from_modelscope(cfg, parser)
     run_id = args.run_id or uuid.uuid4().hex[:12]
     run_dir = project_path(cfg["inference"]["output_dir"]) / run_id
     if args.command in {"prepare", "all"}:

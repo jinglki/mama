@@ -41,6 +41,7 @@ class VisionModel:
             from transformers import LlavaForConditionalGeneration as model_class
         else:
             model_class = AutoModelForImageTextToText
+        print(requested)
         self.model = model_class.from_pretrained(
             path, torch_dtype=dtype, trust_remote_code=trust, low_cpu_mem_usage=True
         ).to(requested).eval()
@@ -64,8 +65,9 @@ class VisionModel:
             messages = [{"role": "user", "content": content}]
         else:
             messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": content}]
+        template_kwargs = {"enable_thinking": False} if self.kind == "qwen35" else {}
         inputs = self.processor.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
+            messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt", **template_kwargs
         )
         inputs = {key: value.to(self.device, dtype=self.dtype if value.is_floating_point() else None)
                   if isinstance(value, torch.Tensor) else value for key, value in inputs.items()}

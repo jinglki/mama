@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PIL import Image
+from tqdm import tqdm
 
 from .config import project_path
 from .enhancements import METHODS, enhance
@@ -58,45 +59,55 @@ def prepare(samples: list[dict], cfg: dict, run_id: str) -> list[dict]:
     if workers < 1:
         raise ValueError("enhancement.workers must be positive")
     prepared = []
-    for sample in samples:
-        conditions = {"original": []}
-        for method in METHODS:
-            for level in cfg["enhancement"]["strengths"]:
-                conditions[f"{method}_{level}"] = []
-        for source in sample["images"]:
-            image_id = uuid.uuid4().hex
-            original = preprocess(source, cfg["preprocess"])
-            original_path = output_dir / f"{image_id}_original.png"
-            original.save(original_path)
-            conditions["original"].append(str(original_path))
+    total_steps = sum(len(sample["images"]) for sample in samples) * (1 + len(METHODS))
+    with tqdm(total=total_steps, desc="Preparing images", unit="step", dynamic_ncols=True) as progress:
+        for sample in samples:
+            conditions = {"original": []}
+            for method in METHODS:
+                for level in cfg["enhancement"]["strengths"]:
+                    conditions[f"{method}_{level}"] = []
+            for source in sample["images"]:
+                progress.set_postfix(sample=sample["id"], image=Path(source).name, refresh=False)
+                image_id = uuid.uuid4().hex
+                original = preprocess(source, cfg["preprocess"])
+                original_dir = output_dir / image_id
+                original_dir.mkdir(parents=True, exist_ok=False)
+                original_path = original_dir / f"{image_id}_original.png"
+                original.save(original_path)
+                conditions["original"].append(str(original_path))
+                progress.update(1)
 
-            def process(method):
-                full = enhance(original, method, cfg["enhancement"])
-                def save_level(level, strength):
-                    path = output_dir / f"{image_id}_{method}_{level}.png"
-                    Image.blend(original, full, float(strength)).save(path)
-                    return f"{method}_{level}", str(path)
+                def process(method):
+                    full = enhance(original, method, cfg["enhancement"])
+                    enhance_dir = original_dir / method
+                    enhance_dir.mkdir()
+                    def save_level(level, strength):
+                        path = enhance_dir / f"{image_id}_{method}_{level}.png"
+                        Image.blend(original, full, float(strength)).save(path)
+                        return f"{method}_{level}", str(path)
 
-                with ThreadPoolExecutor(max_workers=3) as levels:
-                    futures = [levels.submit(save_level, level, strength)
-                               for level, strength in cfg["enhancement"]["strengths"].items()]
-                    return dict(future.result() for future in futures)
+                    with ThreadPoolExecutor(max_workers=3) as levels:
+                        futures = [levels.submit(save_level, level, strength)
+                                   for level, strength in cfg["enhancement"]["strengths"].items()]
+                        return dict(future.result() for future in futures)
 
-            # Independent OpenCV methods run in parallel. Torch methods run in the
-            # main thread so they do not compete for GPU memory.
-            classic = [name for name in METHODS if name not in {"zero_dce", "waternet"}]
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {pool.submit(process, name): name for name in classic}
-                for future in as_completed(futures):
-                    for condition, path in future.result().items():
+                # Independent OpenCV methods run in parallel. Torch methods run in the
+                # main thread so they do not compete for GPU memory.
+                classic = [name for name in METHODS if name not in {"zero_dce", "waternet"}]
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {pool.submit(process, name): name for name in classic}
+                    for future in as_completed(futures):
+                        for condition, path in future.result().items():
+                            conditions[condition].append(path)
+                        progress.update(1)
+                for name in ("zero_dce", "waternet"):
+                    for condition, path in process(name).items():
                         conditions[condition].append(path)
-            for name in ("zero_dce", "waternet"):
-                for condition, path in process(name).items():
-                    conditions[condition].append(path)
-        if any(len(paths) != len(sample["images"]) for paths in conditions.values()):
-            raise RuntimeError("Condition image count mismatch")
-        prepared.append({"id": sample["id"], "question": sample["question"], "target": sample["target"],
-                         "sources": sample["images"], "truth": sample.get("truth"), "conditions": conditions})
+                    progress.update(1)
+            if any(len(paths) != len(sample["images"]) for paths in conditions.values()):
+                raise RuntimeError("Condition image count mismatch")
+            prepared.append({"id": sample["id"], "question": sample["question"], "target": sample["target"],
+                             "sources": sample["images"], "truth": sample.get("truth"), "conditions": conditions})
     return prepared
 
 
@@ -117,24 +128,32 @@ def infer(prepared: list[dict], cfg: dict) -> list[dict]:
 
     model = VisionModel(cfg["model"])
     results = []
-    for sample in prepared:
-        for condition, paths in sample["conditions"].items():
-            if condition == "original" and not cfg["inference"].get("include_original", True):
-                continue
-            if condition != "original":
-                method, separator, level = condition.rpartition("_")
-                if not separator or method not in METHODS or level not in cfg["enhancement"]["strengths"]:
-                    raise ValueError(f"Invalid condition: {condition}")
-            if not paths or any(not Path(path).stem.endswith("_" + condition) for path in paths):
-                raise ValueError(f"Condition {condition} contains mismatched images")
-            record = {"id": sample["id"], "target": sample["target"], "question": sample["question"],
-                      "condition": condition, "images": paths, "truth": sample.get("truth")}
-            try:
-                record["raw"] = model.predict(paths, sample["question"], sample["target"])
-                record["prediction"] = parse_answer(record["raw"], len(paths))
-                record["error"] = None
-            except (ValueError, RuntimeError) as exc:
-                record["prediction"] = None
-                record["error"] = str(exc)
-            results.append(record)
+    include_original = cfg["inference"].get("include_original", True)
+    total_conditions = sum(
+        1 for sample in prepared for condition in sample["conditions"]
+        if condition != "original" or include_original
+    )
+    with tqdm(total=total_conditions, desc="Running inference", unit="condition", dynamic_ncols=True) as progress:
+        for sample in prepared:
+            for condition, paths in sample["conditions"].items():
+                if condition == "original" and not include_original:
+                    continue
+                if condition != "original":
+                    method, separator, level = condition.rpartition("_")
+                    if not separator or method not in METHODS or level not in cfg["enhancement"]["strengths"]:
+                        raise ValueError(f"Invalid condition: {condition}")
+                if not paths or any(not Path(path).stem.endswith("_" + condition) for path in paths):
+                    raise ValueError(f"Condition {condition} contains mismatched images")
+                progress.set_postfix(sample=sample["id"], condition=condition, refresh=False)
+                record = {"id": sample["id"], "target": sample["target"], "question": sample["question"],
+                          "condition": condition, "images": paths, "truth": sample.get("truth")}
+                try:
+                    record["raw"] = model.predict(paths, sample["question"], sample["target"])
+                    record["prediction"] = parse_answer(record["raw"], len(paths))
+                    record["error"] = None
+                except (ValueError, RuntimeError) as exc:
+                    record["prediction"] = None
+                    record["error"] = str(exc)
+                results.append(record)
+                progress.update(1)
     return results
