@@ -1,0 +1,1 @@
+{"id":"sample-001","images":["images/1.jpg"],"target":"人","question":"每张图中是否有人？分别指出位置和数量。","truth":[{"count":3}]}
